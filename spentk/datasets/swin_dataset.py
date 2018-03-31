@@ -23,7 +23,7 @@ def slice_signal_index(signal, window_size, stride):
         else:
             left = window_size
         end_i = beg_i + left
-        #print('slicing {} -> {} from {} total'.format(beg_i, end_i, n_samples))
+        print('slicing {} -> {} from {} total'.format(beg_i, end_i, n_samples))
         slice_ = (beg_i, end_i)
         slices.append(slice_)
     return slices
@@ -36,7 +36,7 @@ class SWinDataset(Dataset):
 
     def __init__(self, data_root, split='train',
                  window=512, stride=None, rate=16000,
-                 cache_path=None):
+                 cache_path=None, transform=None):
         """
         # Arguments
             window: num of samples of waveform
@@ -49,6 +49,7 @@ class SWinDataset(Dataset):
         self.split = split
         self.window = window
         self.stride = stride
+        self.transform = transform
         self.rate = 16000
         if stride is None:
             self.stride = window
@@ -123,14 +124,21 @@ class SWinDataset(Dataset):
         beg_n, end_n = nslice
         csl = cwav[beg_c:end_c]
         nsl = nwav[beg_n:end_n]
-        return csl, nsl
+        if self.transform is not None:
+            return self.transform(csl), self.transform(nsl)
+        else:
+            return csl, nsl
             
 
 if __name__ == '__main__':
-    dset = SWinDataset('/tmp/')
+    from transforms import *
+    dset = SWinDataset('/tmp/', cache_path='.', transform=wav2fft(logpower=True))
     print(len(dset))
-    cslice, nslice = dset.__getitem__(0)
-    print('cslice shape: ', cslice.shape)
-    print('nslice shape: ', nslice.shape)
+    for n in range(30, 40):
+        cslice, nslice = dset.__getitem__(n)
+        print('cslice shape: ', cslice.shape)
+        print('nslice shape: ', nslice.shape)
+        print('cslice min:{}, max:{}'.format(cslice[:, 0].min(),
+                                             cslice[:, 0].max()))
     
 
