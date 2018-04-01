@@ -1,4 +1,6 @@
 from torch.utils.data import Dataset
+import numpy as np
+import timeit
 import glob
 import pickle
 import librosa
@@ -23,7 +25,7 @@ def slice_signal_index(signal, window_size, stride):
         else:
             left = window_size
         end_i = beg_i + left
-        print('slicing {} -> {} from {} total'.format(beg_i, end_i, n_samples))
+        #print('slicing {} -> {} from {} total'.format(beg_i, end_i, n_samples))
         slice_ = (beg_i, end_i)
         slices.append(slice_)
     return slices
@@ -68,19 +70,19 @@ class SWinDataset(Dataset):
         noisy_path = os.path.join(data_root, noisy_path)
         self.samples = []
         # read list of clean files and map to noise files
-        cwavs = glob.glob(os.path.join(data_root, clean_path, '*.wav'))
-        for cwav in cwavs:
+        cwavs = glob.glob(os.path.join(clean_path, '*.wav'))
+        for ci, cwav in enumerate(cwavs):
             # check the noisy counterpart exists
             bname = os.path.basename(cwav)
             nwav = os.path.join(noisy_path, bname)
-            print('nwav: ', nwav)
             if not os.path.exists(nwav):
                 raise FileNotFoundError('Noisy file {} not '
                                         'found'.format(bname))
             self.samples.append({'cpath':cwav,
                                  'npath':nwav})
         if cache_path is not None:
-            cache_file = os.path.join(cache_path, 'wav_slices.cache')
+            cache_file = os.path.join(cache_path, 
+                                      '{}_wav_slices.cache'.format(split))
 
             if os.path.exists(cache_file):
                 with open(cache_file, 'rb') as cache_f:
@@ -92,11 +94,15 @@ class SWinDataset(Dataset):
                     pickle.dump(self.samples, cache_f)
         else:
             self.make_slicings()
+        if len(self.samples) == 0:
+            raise ValueError('No samples found in SWin Dataset')
 
 
     def make_slicings(self):
         """ Make wav slice indexes, to reduce samples to windows """
         samples = []
+        timings = []
+        beg_t = timeit.default_timer()
         for w_i, sample in enumerate(self.samples):
             cpath = sample['cpath']
             npath = sample['npath']
@@ -104,9 +110,17 @@ class SWinDataset(Dataset):
             nwav, rate = librosa.load(npath, self.rate)
             cslicings = slice_signal_index(cwav, self.window, self.stride)
             nslicings = slice_signal_index(cwav, self.window, self.stride)
+            end_t = timeit.default_timer()
+            timings.append(end_t - beg_t)
+            beg_t = timeit.default_timer()
             for (csl, nsl) in zip(cslicings, nslicings):
                 samples.append({'cpath':cpath, 'npath':npath,
                                 'cslice':csl, 'nslice':nsl})
+            if (w_i + 1) % 100 == 0 or \
+               (w_i + 1) >= len(self.samples):
+                print('Sliced {:5d}/{:5d} pairs w/ {:.2f} s/sample'
+                      ''.format(w_i+1, len(self.samples),
+                                np.mean(timings)))
         # replace samples with new samples sliced
         self.samples = samples
                 
@@ -132,7 +146,8 @@ class SWinDataset(Dataset):
 
 if __name__ == '__main__':
     from transforms import *
-    dset = SWinDataset('/tmp/', cache_path='.', transform=wav2fft(logpower=True))
+    dset = SWinDataset('/veu/spascual/git/segan_pytorch/data/expanded_segan1_additive', 
+                       cache_path='.', transform=wav2fft(logpower=True))
     print(len(dset))
     for n in range(30, 40):
         cslice, nslice = dset.__getitem__(n)

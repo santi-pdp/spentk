@@ -36,6 +36,30 @@ class DNN(nn.Module):
         """
         return self.dnn(x)
 
+    def clean_wav(self, x, wsize=512, stride=None,
+                  n_fft=512):
+        """ Clean an input waveform, adapting
+            it to forward through model and then
+            connecting the chunks again
+        """
+        from scipy.fftpack import fft
+        assert isinstance(x, np.ndarray), type(x)
+        if stride is None:
+            stride = wsize
+        phases = []
+        mags = []
+        for beg_i in range(0, x.shape[0], stride):
+            x_ = x[beg_i:beg_i + wsize]
+            X_ = fft(x_, n_fft)[n_fft // 2 + 1]
+            X_mag = np.log(np.abs(X_) ** 2 + 1)
+            X_pha = np.angle(X_)
+            print('X_mag: ', X_mag.shape)
+            print('X_pha: ', X_pha.shape)
+            phases.append(X_pha)
+            mags.append(X_mag)
+
+
+
 if __name__ == '__main__':
     dnn = DNN()
     #dnn.eval()
