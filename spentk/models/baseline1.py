@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+import librosa
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
@@ -43,20 +45,29 @@ class DNN(nn.Module):
             connecting the chunks again
         """
         from scipy.fftpack import fft
+        from scipy.signal import istft
         assert isinstance(x, np.ndarray), type(x)
         if stride is None:
             stride = wsize
         phases = []
         mags = []
-        for beg_i in range(0, x.shape[0], stride):
-            x_ = x[beg_i:beg_i + wsize]
-            X_ = fft(x_, n_fft)[n_fft // 2 + 1]
-            X_mag = np.log(np.abs(X_) ** 2 + 1)
-            X_pha = np.angle(X_)
-            print('X_mag: ', X_mag.shape)
-            print('X_pha: ', X_pha.shape)
-            phases.append(X_pha)
-            mags.append(X_mag)
+        X_ = librosa.stft(x, n_fft=n_fft, win_length=wsize, window='boxcar')
+        X_mag = np.log(np.abs(X_) ** 2 + 1)
+        X_pha = np.angle(X_)
+        X_mag = Variable(torch.FloatTensor(X_mag)).t()
+        print('X_mag size: ', X_mag.size())
+        pred_mag = self.dnn(X_mag)
+        print('pred_mag size: ', pred_mag.size())
+        pred_mag = pred_mag.cpu().data.numpy()
+        pred_mag = np.exp(pred_mag) - 1
+        # trim negative if available
+        pred_mag[np.where(pred_mag < 0)] = 0
+        pred_mag = np.sqrt(pred_mag).T
+        print('pred_mag shape: ', pred_mag.shape)
+        X_back = pred_mag * np.exp(1j * X_pha)
+        Y = librosa.istft(X_back, win_length=wsize, window='boxcar')
+        librosa.output.write_wav('/tmp/out.wav', Y, 16000)
+            
 
 
 
