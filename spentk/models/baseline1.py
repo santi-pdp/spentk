@@ -12,7 +12,8 @@ class DNN(nn.Module):
         fully connected topology end-to-end, thus each
         frame is mapped independently
     """
-    def __init__(self, num_inputs=257, hidden_size=1024, num_layers=4):
+    def __init__(self, num_inputs=257, hidden_size=1024, num_layers=4,
+                 in_frames=1):
         """ Default parameters stand for the model in the paper """
         super().__init__()
         self.num_inputs = num_inputs
@@ -22,7 +23,7 @@ class DNN(nn.Module):
         dnn_d = OrderedDict()
         for nl in range(num_layers):
             if nl == 0:
-                ninputs = self.num_inputs
+                ninputs = self.num_inputs * in_frames
             else:
                 ninputs = hidden_size
             dnn_d['fc_%d'%nl] = nn.Linear(ninputs, hidden_size)
@@ -39,7 +40,7 @@ class DNN(nn.Module):
         return self.dnn(x)
 
     def clean_wav(self, x, wsize=512, stride=None,
-                  n_fft=512):
+                  n_fft=512, cuda=False):
         """ Clean an input waveform, adapting
             it to forward through model and then
             connecting the chunks again
@@ -55,18 +56,17 @@ class DNN(nn.Module):
         X_mag = np.log(np.abs(X_) ** 2 + 1)
         X_pha = np.angle(X_)
         X_mag = Variable(torch.FloatTensor(X_mag)).t()
-        print('X_mag size: ', X_mag.size())
+        if cuda:
+            X_mag = X_mag.cuda()
         pred_mag = self.dnn(X_mag)
-        print('pred_mag size: ', pred_mag.size())
         pred_mag = pred_mag.cpu().data.numpy()
         pred_mag = np.exp(pred_mag) - 1
         # trim negative if available
         pred_mag[np.where(pred_mag < 0)] = 0
         pred_mag = np.sqrt(pred_mag).T
-        print('pred_mag shape: ', pred_mag.shape)
         X_back = pred_mag * np.exp(1j * X_pha)
         Y = librosa.istft(X_back, win_length=wsize, window='boxcar')
-        librosa.output.write_wav('/tmp/out.wav', Y, 16000)
+        return Y
             
 
 
