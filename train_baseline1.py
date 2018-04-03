@@ -7,7 +7,8 @@ import torch.optim as optim
 import argparse
 from spentk.models.baseline1 import DNN
 from tensorboardX import SummaryWriter
-from spentk.datasets.swin_dataset import SWinDataset
+from spentk.datasets.swin_dataset import SWinDataset, WavPairDataset
+from spentk.datasets.swin_dataset import LPSCollater
 from spentk.datasets.transforms import *
 import random
 import os
@@ -22,7 +23,7 @@ def eval_epoch(dloader, model, criterion, epoch, writer, log_freq):
     beg_t = timeit.default_timer()
     for bidx, batch in enumerate(dloader, start=1):
         # split into (X, Y) pairs
-        lps_y, lps_x = batch
+        lps_x, lps_y = batch
         lps_x = Variable(lps_x, volatile=True)
         lps_y = Variable(lps_y, volatile=True)
         lps_x, lps_x_pha = torch.chunk(lps_x, 2, dim=2)
@@ -48,22 +49,31 @@ def eval_epoch(dloader, model, criterion, epoch, writer, log_freq):
 
 
 def train(opts):
-    model = DNN()
+    model = DNN(in_frames=opts.in_frames)
     if opts.cuda:
         model.cuda()
+    print(model)
     writer = SummaryWriter(os.path.join(opts.save_path,
                                         'train'))
     opt = optim.Adam(model.parameters())
     criterion = nn.MSELoss()
-    dset = SWinDataset(opts.dataset, cache_path=opts.cache_path,
-                       transform=wav2fft(logpower=True))
-    va_dset = SWinDataset(opts.dataset, cache_path=opts.cache_path,
-                          transform=wav2fft(logpower=True),
-                          split='valid')
+    dset = WavPairDataset(opts.dataset, transform=wav2stft(logpower=True),
+                          maxlen=opts.maxlen)
+    va_dset = WavPairDataset(opts.dataset, split='valid',
+                             transform=wav2stft(logpower=True),
+                             maxlen=opts.maxlen)
+    collater = LPSCollater(N_frames=opts.in_frames)
+    #dset = SWinDataset(opts.dataset, cache_path=opts.cache_path,
+    #                   transform=wav2fft(logpower=True))
+    #va_dset = SWinDataset(opts.dataset, cache_path=opts.cache_path,
+    #                      transform=wav2fft(logpower=True),
+    #                      split='valid')
     dloader = DataLoader(dset, batch_size=opts.batch_size,
-                         shuffle=True, num_workers=opts.num_workers)
+                         shuffle=True, num_workers=opts.num_workers,
+                         collate_fn=collater)
     va_dloader = DataLoader(va_dset, batch_size=opts.batch_size,
-                            shuffle=False, num_workers=opts.num_workers)
+                            shuffle=False, num_workers=opts.num_workers,
+                            collate_fn=collater)
     timings = []
     global_step = 0
     patience = opts.patience
@@ -73,7 +83,7 @@ def train(opts):
         beg_t = timeit.default_timer()
         for bidx, batch in enumerate(dloader, start=1):
             # split into (X, Y) pairs
-            lps_y, lps_x = batch
+            lps_x, lps_y = batch
             lps_x = Variable(lps_x)
             lps_y = Variable(lps_y)
             lps_x, lps_x_pha = torch.chunk(lps_x, 2, dim=2)
@@ -84,6 +94,7 @@ def train(opts):
                 lps_x = lps_x.cuda()
                 lps_y = lps_y.cuda()
             opt.zero_grad()
+            #print('lps_x size: ', lps_x.size())
             y_ = model(lps_x)
             loss = criterion(y_, lps_y)
             loss.backward()        
@@ -127,7 +138,10 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=111)
     parser.add_argument('--cuda', action='store_true', default=False)
     parser.add_argument('--save_path', type=str, default='baseline1_ckpt')
+    parser.add_argument('--in_frames', type=int, default=1,
+                        help='Num of input frames to LPS DNN')
     parser.add_argument('--cache_path', type=str, default=None)
+    parser.add_argument('--maxlen', type=int, default=None)
     parser.add_argument('--dataset', type=str,
                         default='data',
                         help='Root folder where the following subsets '

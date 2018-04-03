@@ -1,4 +1,5 @@
 from scipy.fftpack import fft
+from librosa.core import stft
 import numpy as np
 import torch
 
@@ -17,3 +18,19 @@ class wav2fft(object):
             X_mag = np.log((X_mag ** 2) + 1)
         X_pha = np.angle(X)[:, None]
         return np.concatenate((X_mag, X_pha), axis=1)
+
+class wav2stft(object):
+
+    def __init__(self, n_fft=512, logpower=False):
+        self.n_fft = n_fft
+        self.logpower = logpower
+
+    def __call__(self, x):
+        if isinstance(x, torch.Tensor):
+            x = x.numpy()
+        X = stft(x, n_fft=self.n_fft)
+        X_mag = np.abs(X)[:, :, None]
+        if self.logpower:
+            X_mag = np.log((X_mag ** 2) + 1)
+            X_pha = np.angle(X)[:, :, None]
+        return np.concatenate((X_mag, X_pha), axis=2)

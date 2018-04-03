@@ -1,10 +1,13 @@
+import torch
 from torch.utils.data import Dataset
+import random
 import numpy as np
 import timeit
 import glob
 import pickle
 import librosa
 import os
+
 
 def slice_signal_index(signal, window_size, stride):
     """ Slice input signal into indexes (beg, end) each
@@ -29,6 +32,39 @@ def slice_signal_index(signal, window_size, stride):
         slice_ = (beg_i, end_i)
         slices.append(slice_)
     return slices
+
+class LPSCollater(object):
+
+    def __init__(self, N_frames=1):
+        self.N_frames = N_frames
+
+    def __call__(self, batch):
+        """ Collate the (x, y) samples into 
+            a batch [BxT, NxF]
+        """
+        clean=[]
+        noisy=[]
+        r = self.N_frames
+        for sample in batch:
+            x, y = sample
+            if r > 1:
+                F_dim = int(x.size(1))
+                assert r % 2 != 0, r
+                # prepare padded version of x and y
+                # to get context with BOS and EOS '0' codes
+                z_t = torch.zeros(r // 2, F_dim, y.size(2))
+                p_y = torch.cat((z_t, y, z_t), dim=0)
+                for n in range(0, p_y.size(0) - (r - 1)):
+                    y_expn = p_y[n:n+r, :, :].contiguous().view(1, 
+                                                                -1, 
+                                                                p_y.size(2))
+                    noisy.append(y_expn)
+            else:
+                noisy.append(y)
+            clean.append(x)
+        noisy = torch.cat(noisy, dim=0)
+        clean = torch.cat(clean, dim=0)
+        return noisy, clean
 
 class SWinDataset(Dataset):
     """ Strided Window dataset, consuming pairs of 
@@ -142,6 +178,68 @@ class SWinDataset(Dataset):
             return self.transform(csl), self.transform(nsl)
         else:
             return csl, nsl
+
+class WavPairDataset(Dataset):
+    """ Consuming pair of full speech chunks (clean, noisy) """
+
+    def __init__(self, data_root, split='train',
+                 rate=16000,
+                 transform=None,
+                 maxlen=None):
+        super().__init__()
+        self.split = split
+        self.transform = transform
+        self.rate = 16000
+        self.maxlen = maxlen
+        if split == 'train':
+            clean_path = 'clean_trainset'
+            noisy_path = 'noisy_trainset'
+        elif split == 'valid':
+            clean_path = 'clean_valset'
+            noisy_path = 'noisy_valset'
+        elif split == 'test':
+            clean_path = 'clean_testset'
+            noisy_path = 'noisy_testset'
+        else:
+            raise ValueError('Unrecognized split type: ', split)
+        clean_path = os.path.join(data_root, clean_path)
+        noisy_path = os.path.join(data_root, noisy_path)
+        self.samples = []
+        # read list of clean files and map to noise files
+        cwavs = glob.glob(os.path.join(clean_path, '*.wav'))
+        for ci, cwav in enumerate(cwavs):
+            # check the noisy counterpart exists
+            bname = os.path.basename(cwav)
+            nwav = os.path.join(noisy_path, bname)
+            if not os.path.exists(nwav):
+                raise FileNotFoundError('Noisy file {} not '
+                                        'found'.format(bname))
+            self.samples.append({'cpath':cwav,
+                                 'npath':nwav})
+        if len(self.samples) == 0:
+            raise ValueError('No samples found in SWin Dataset')
+
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, index):
+        cpath = self.samples[index]['cpath']
+        npath = self.samples[index]['npath']
+        cwav, rate = librosa.load(cpath, self.rate)
+        nwav, rate = librosa.load(npath, self.rate)
+        if self.maxlen is not None:
+            maxlen = min(self.maxlen, cwav.shape[0])
+            # randomly take a portion of maxlen of input wav
+            beg_i = random.randint(0, cwav.shape[0] - maxlen)
+            cwav = cwav[beg_i:beg_i + maxlen]
+            nwav = nwav[beg_i:beg_i + maxlen]
+        cwav = self.transform(cwav)
+        nwav = self.transform(nwav)
+        cwav = torch.FloatTensor(cwav).contiguous()
+        nwav = torch.FloatTensor(nwav).contiguous()
+        cwav = cwav.transpose(0,1)
+        nwav = nwav.transpose(0,1)
+        return cwav, nwav
             
 
 if __name__ == '__main__':
