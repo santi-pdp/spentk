@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 import numpy as np
+import soundfile as sf
 import torch.optim as optim
 import argparse
 from spentk.models.baseline1 import DNN
@@ -24,12 +25,16 @@ def train(opts):
                                      map_location=lambda storage, loc:storage))
     model.eval()
     criterion = nn.MSELoss()
-    assert os.path.exists(opts.test_file)
-    wav, rate = librosa.load(opts.test_file, 16000)
-    print('wav.shape: ', wav.shape)
-    y = model.clean_wav(wav)
-
-        
+    for t_i, test_file in enumerate(opts.test_files, start=1):
+        basename = os.path.basename(test_file)
+        wav, rate = librosa.load(test_file, 16000)
+        out_file = os.path.join(opts.save_path, basename)
+        print('Cleaning wav {}/{}: {} -> {}'.format(t_i, len(opts.test_files),
+                                                    test_file, 
+                                                    out_file))
+        y = model.clean_wav(wav)
+        sf.write(out_file, y, 16000,'PCM_16')
+        #librosa.output.write_wav(out_file, y, 16000)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -40,10 +45,10 @@ if __name__ == '__main__':
     parser.add_argument('--patience', type=int, default=5)
     parser.add_argument('--seed', type=int, default=111)
     parser.add_argument('--cuda', action='store_true', default=False)
-    parser.add_argument('--save_path', type=str, default='baseline1_ckpt')
+    parser.add_argument('--save_path', type=str, default='baseline1_clean_utts')
     parser.add_argument('--cache_path', type=str, default=None)
     parser.add_argument('--ckpt_file', type=str, default=None)
-    parser.add_argument('--test_file', type=str, default=None)
+    parser.add_argument('--test_files', type=str, nargs='+', default=None)
     parser.add_argument('--dataset', type=str,
                         default='data',
                         help='Root folder where the following subsets '
@@ -64,8 +69,5 @@ if __name__ == '__main__':
 
     if not os.path.exists(opts.save_path):
         os.makedirs(opts.save_path)
-
-    with open(os.path.join(opts.save_path, 'train.opts'), 'w') as opts_f:
-        opts_f.write(json.dumps(vars(opts), indent=2))
 
     train(opts)
