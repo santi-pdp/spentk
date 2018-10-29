@@ -16,6 +16,18 @@ import json
 import timeit
 
 
+def get_grads(model):
+    grads = None
+    for i, (k, param) in enumerate(dict(model.named_parameters()).items()):
+        if param.grad is None:
+            print('WARNING getting grads: {} param grad is None'.format(k))
+            continue
+        if grads is None:
+            grads = param.grad.cpu().data.view((-1, ))
+        else:
+            grads = torch.cat((grads, param.grad.cpu().data.view((-1,))), dim=0)
+    return grads
+
 def eval_epoch(dloader, model, criterion, epoch, writer, log_freq):
     model.eval()
     timings = []
@@ -49,25 +61,28 @@ def eval_epoch(dloader, model, criterion, epoch, writer, log_freq):
 
 
 def train(opts):
-    model = DNN(in_frames=opts.in_frames)
-    if opts.cuda:
-        model.cuda()
+    device = 'cpu'
+    if torch.cuda.is_available() and opts.cuda:
+        device = 'cuda'
+    model = DNN(in_frames=opts.in_frames, dropout=opts.dropout,
+                no_bnorm=opts.no_bnorm)
+    model.to(device)
     print(model)
     writer = SummaryWriter(os.path.join(opts.save_path,
                                         'train'))
-    opt = optim.Adam(model.parameters())
-    criterion = nn.MSELoss()
+    opt = optim.Adam(model.parameters(), lr=opts.lr)
+    if opts.loss == 'l2':
+        criterion = nn.MSELoss()
+    elif opts.loss == 'l1':
+        criterion = nn.L1Loss()
+    else:
+        raise TypeError('Loss function {} not understood'.format(opts.loss))
     dset = WavPairDataset(opts.dataset, transform=wav2stft(logpower=True),
                           maxlen=opts.maxlen)
     va_dset = WavPairDataset(opts.dataset, split='valid',
                              transform=wav2stft(logpower=True),
                              maxlen=opts.maxlen)
     collater = LPSCollater(N_frames=opts.in_frames)
-    #dset = SWinDataset(opts.dataset, cache_path=opts.cache_path,
-    #                   transform=wav2fft(logpower=True))
-    #va_dset = SWinDataset(opts.dataset, cache_path=opts.cache_path,
-    #                      transform=wav2fft(logpower=True),
-    #                      split='valid')
     dloader = DataLoader(dset, batch_size=opts.batch_size,
                          shuffle=True, num_workers=opts.num_workers,
                          collate_fn=collater)
@@ -84,20 +99,23 @@ def train(opts):
         for bidx, batch in enumerate(dloader, start=1):
             # split into (X, Y) pairs
             lps_x, lps_y = batch
-            lps_x = Variable(lps_x)
-            lps_y = Variable(lps_y)
             lps_x, lps_x_pha = torch.chunk(lps_x, 2, dim=2)
             lps_x = lps_x.squeeze(2)
             lps_y, lps_y_pha = torch.chunk(lps_y, 2, dim=2)
             lps_y = lps_y.squeeze(2)
-            if opts.cuda:
-                lps_x = lps_x.cuda()
-                lps_y = lps_y.cuda()
+            lps_x = lps_x.to(device)
+            lps_y = lps_y.to(device)
             opt.zero_grad()
-            #print('lps_x size: ', lps_x.size())
             y_ = model(lps_x)
             loss = criterion(y_, lps_y)
+            #print('y_ min: {} max: {}'.format(y_.cpu().data.min(),
+            #                                  y_.cpu().data.max()))
+            #print('lps_y min: {} max: {}'.format(lps_y.cpu().data.min(),
+            #                                      lps_y.cpu().data.max()))
+            #print('lps_x min: {} max: {}'.format(lps_x.cpu().data.min(),
+            #                                      lps_x.cpu().data.max()))
             loss.backward()        
+            #get_grads(model)
             opt.step()
             end_t = timeit.default_timer()
             timings.append(end_t - beg_t)
@@ -108,6 +126,12 @@ def train(opts):
                       ''.format(bidx, len(dloader), epoch, loss.cpu().data[0],
                                 timings[-1], np.mean(timings)))
                 writer.add_scalar('training/loss', loss.cpu().data[0], global_step)
+                writer.add_histogram('training/lps_x', lps_x.cpu().data,
+                                     global_step, bins='sturges')
+                writer.add_histogram('training/lps_y', lps_y.cpu().data,
+                                     global_step, bins='sturges')
+                writer.add_histogram('training/pred_y', y_.cpu().data,
+                                     global_step, bins='sturges')
             global_step += 1
         va_losses = eval_epoch(va_dloader, model, criterion, epoch, writer, opts.save_freq)
         mva_loss = np.mean(va_losses)
@@ -135,12 +159,16 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=2000)
     parser.add_argument('--patience', type=int, default=5)
+    parser.add_argument('--dropout', type=float, default=0.)
+    parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--seed', type=int, default=111)
     parser.add_argument('--cuda', action='store_true', default=False)
     parser.add_argument('--save_path', type=str, default='baseline1_ckpt')
+    parser.add_argument('--no-bnorm', action='store_true', default=False)
     parser.add_argument('--in_frames', type=int, default=1,
                         help='Num of input frames to LPS DNN')
     parser.add_argument('--cache_path', type=str, default=None)
+    parser.add_argument('--loss', type=str, default='l2')
     parser.add_argument('--maxlen', type=int, default=None)
     parser.add_argument('--dataset', type=str,
                         default='data',

@@ -221,6 +221,13 @@ class WavPairDataset(Dataset):
 
     def __len__(self):
         return len(self.samples)
+
+    def pad_shorter(self, short_, long_):
+        if len(short_) < len(long_):
+            P = len(long_) - len(short_)
+            z = np.zeros(P)
+            short_ = np.concatenate((short_, z), axis=0)
+        return short_
     
     def __getitem__(self, index):
         cpath = self.samples[index]['cpath']
@@ -233,6 +240,8 @@ class WavPairDataset(Dataset):
             beg_i = random.randint(0, cwav.shape[0] - maxlen)
             cwav = cwav[beg_i:beg_i + maxlen]
             nwav = nwav[beg_i:beg_i + maxlen]
+        nwav = self.pad_shorter(nwav, cwav)
+        cwav = self.pad_shorter(cwav, nwav)
         cwav = self.transform(cwav)
         nwav = self.transform(nwav)
         cwav = torch.FloatTensor(cwav).contiguous()
