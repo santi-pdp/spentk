@@ -46,7 +46,7 @@ def eval_epoch(dloader, model, criterion, epoch, writer, log_freq):
             lps_x = lps_x.cuda()
             lps_y = lps_y.cuda()
         y_ = model(lps_x)
-        loss = criterion(lps_y, y_)
+        loss = criterion(y_, lps_y)
         end_t = timeit.default_timer()
         timings.append(end_t - beg_t)
         beg_t = timeit.default_timer()

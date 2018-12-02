@@ -31,6 +31,6 @@ class wav2stft(object):
         X = stft(x, n_fft=self.n_fft)
         X_mag = np.abs(X)[:, :, None]
         if self.logpower:
-            X_mag = np.log((X_mag ** 2) + 1)
+            X_mag = np.log((X_mag ** 2))
             X_pha = np.angle(X)[:, :, None]
         return np.concatenate((X_mag, X_pha), axis=2)
