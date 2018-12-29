@@ -28,36 +28,34 @@ def get_grads(model):
             grads = torch.cat((grads, param.grad.cpu().data.view((-1,))), dim=0)
     return grads
 
-def eval_epoch(dloader, model, criterion, epoch, writer, log_freq):
+def eval_epoch(dloader, model, criterion, epoch, writer, log_freq, device):
     model.eval()
-    timings = []
-    va_losses = []
-    beg_t = timeit.default_timer()
-    for bidx, batch in enumerate(dloader, start=1):
-        # split into (X, Y) pairs
-        lps_x, lps_y = batch
-        lps_x = Variable(lps_x, volatile=True)
-        lps_y = Variable(lps_y, volatile=True)
-        lps_x, lps_x_pha = torch.chunk(lps_x, 2, dim=2)
-        lps_x = lps_x.squeeze(2)
-        lps_y, lps_y_pha = torch.chunk(lps_y, 2, dim=2)
-        lps_y = lps_y.squeeze(2)
-        if opts.cuda:
-            lps_x = lps_x.cuda()
-            lps_y = lps_y.cuda()
-        y_ = model(lps_x)
-        loss = criterion(y_, lps_y)
-        end_t = timeit.default_timer()
-        timings.append(end_t - beg_t)
+    with toch.no_grad():
+        timings = []
+        va_losses = []
         beg_t = timeit.default_timer()
-        va_losses.append(loss.cpu().data[0])
-        if bidx % log_freq == 0 or bidx >= len(dloader):
-            print('EVAL epoch {}, Batch {}/{} loss: {:.3f} '
-                  'btime: {:.3f} s, mbtime: {:.3f}'
-                  ''.format(epoch, bidx, len(dloader), loss.cpu().data[0],
-                            timings[-1], np.mean(timings)))
-    writer.add_scalar('valid/loss', np.mean(va_losses), epoch)
-    return va_losses
+        for bidx, batch in enumerate(dloader, start=1):
+            # split into (X, Y) pairs
+            lps_x, lps_y = batch
+            lps_x, lps_x_pha = torch.chunk(lps_x, 2, dim=2)
+            lps_x = lps_x.squeeze(2)
+            lps_y, lps_y_pha = torch.chunk(lps_y, 2, dim=2)
+            lps_y = lps_y.squeeze(2)
+            lps_x = lps_x.to(device)
+            lps_y = lps_y.to(device)
+            y_ = model(lps_x)
+            loss = criterion(y_, lps_y)
+            end_t = timeit.default_timer()
+            timings.append(end_t - beg_t)
+            beg_t = timeit.default_timer()
+            va_losses.append(loss.cpu().data[0])
+            if bidx % log_freq == 0 or bidx >= len(dloader):
+                print('EVAL epoch {}, Batch {}/{} loss: {:.3f} '
+                      'btime: {:.3f} s, mbtime: {:.3f}'
+                      ''.format(epoch, bidx, len(dloader), loss.item(),
+                                timings[-1], np.mean(timings)))
+        writer.add_scalar('valid/loss', np.mean(va_losses), epoch)
+        return va_losses
 
 
 def train(opts):
@@ -108,12 +106,6 @@ def train(opts):
             opt.zero_grad()
             y_ = model(lps_x)
             loss = criterion(y_, lps_y)
-            #print('y_ min: {} max: {}'.format(y_.cpu().data.min(),
-            #                                  y_.cpu().data.max()))
-            #print('lps_y min: {} max: {}'.format(lps_y.cpu().data.min(),
-            #                                      lps_y.cpu().data.max()))
-            #print('lps_x min: {} max: {}'.format(lps_x.cpu().data.min(),
-            #                                      lps_x.cpu().data.max()))
             loss.backward()        
             #get_grads(model)
             opt.step()
@@ -123,9 +115,9 @@ def train(opts):
             if bidx % opts.save_freq == 0 or bidx >= len(dloader):
                 print('Batch {}/{} (epoch {}) loss: {:.3f} '
                       'btime: {:.3f} s, mbtime: {:.3f}'
-                      ''.format(bidx, len(dloader), epoch, loss.cpu().data[0],
+                      ''.format(bidx, len(dloader), epoch, loss.item(),
                                 timings[-1], np.mean(timings)))
-                writer.add_scalar('training/loss', loss.cpu().data[0], global_step)
+                writer.add_scalar('training/loss', loss.item(), global_step)
                 writer.add_histogram('training/lps_x', lps_x.cpu().data,
                                      global_step, bins='sturges')
                 writer.add_histogram('training/lps_y', lps_y.cpu().data,
@@ -133,7 +125,8 @@ def train(opts):
                 writer.add_histogram('training/pred_y', y_.cpu().data,
                                      global_step, bins='sturges')
             global_step += 1
-        va_losses = eval_epoch(va_dloader, model, criterion, epoch, writer, opts.save_freq)
+        va_losses = eval_epoch(va_dloader, model, criterion, epoch, writer, 
+                               opts.save_freq, device)
         mva_loss = np.mean(va_losses)
         if min_va_loss > mva_loss:
             print('Val loss improved {:.3f} --> {:.3f}'.format(min_va_loss,
