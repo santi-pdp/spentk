@@ -66,6 +66,52 @@ class LPSCollater(object):
         clean = torch.cat(clean, dim=0)
         return noisy, clean
 
+class SeqLPSCollater(object):
+
+    def __init__(self, maxlen=None):
+        self.maxlen = maxlen
+
+    def __call__(self, batch):
+        """ Collate the (x, y) samples into batches
+            X, Y of sizes [B, T, F, 2], B: batch size,
+            T: seq_len, F: num_freq_bins, 2: [mag, phase].
+        """
+        maxlen = 0
+        if self.maxlen is None:
+            for sample in batch:
+                x, y = sample
+                clen = x.shape[0]
+                if clen > maxlen:
+                    maxlen = clen
+        else:
+            maxlen = self.maxlen
+        clean = []
+        noisy = []
+        def pad_T(T, maxlen):
+            clen = T.shape[0]
+            if clen > maxlen:
+                return T[:maxlen]
+            elif clen < maxlen:
+                P = maxlen - clen
+                Z = np.zeros((P, ) + T.shape[1:])
+                T = np.concatenate((T, Z), axis=0)
+                return T
+            else:
+                return T
+
+        for sample in batch:
+            x, y = sample
+            x = pad_T(x, maxlen)
+            y = pad_T(y, maxlen)
+            clean.append(x[None, :, :, :])
+            noisy.append(y[None, :, :, :])
+        clean = np.concatenate(clean, axis=0)
+        noisy = np.concatenate(noisy, axis=0)
+        clean = torch.FloatTensor(clean)
+        noisy = torch.FloatTensor(noisy)
+        return clean, noisy
+                 
+
 class SWinDataset(Dataset):
     """ Strided Window dataset, consuming pairs of 
         speech chunks (clean, noisy) in certain strides 
